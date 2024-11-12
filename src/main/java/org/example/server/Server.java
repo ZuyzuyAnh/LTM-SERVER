@@ -16,6 +16,7 @@ import java.net.Socket;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +40,8 @@ public class Server {
     private final ConcurrentHashMap<User, Integer> playing = new ConcurrentHashMap<>();
 
     private final ConcurrentHashMap<Integer, Message> answers = new ConcurrentHashMap<>();
+
+    private Map<Integer, MatchScore> matchScores = new HashMap<>(); // key: matchId
 
     private final UserDAO userDAO;
     private final MatchDAO matchDAO;
@@ -119,13 +122,7 @@ public class Server {
             case "invite declined":
                 handleInviteDecline(message);
                 break;
-            case "new round":
-                handleNewRound(message);
-                break;
-            case "answer":
-                handleAnswer(message);
-                break;
-            case "end":
+            case "end game":
                 handleEndgame(message);
                 break;
             case "history":
@@ -143,10 +140,24 @@ public class Server {
             case "questions":
                 handleQuestions(message);
                 break;
-            case "play audio":
-                handlePlayAudio(message);
+            case "delete question":
+                handleDeleteQuestion(message);
+                break;
+            case "update question":
+                handleUpdateQuestion(message);
                 break;
         }
+    }
+
+
+    private void handleUpdateQuestion(Message message) throws SQLException {
+        Question question = Parser.fromJson(message.getData(), Question.class);
+        questionDAO.updateQuestion(question.getId(), question.getSoundUrl(), question.getAnswer());
+    }
+
+    private void handleDeleteQuestion(Message message) throws SQLException {
+        int questionId = Parser.fromJson(message.getData(), Integer.class);
+        questionDAO.deleteQuestion(questionId);
     }
 
     private void handlePlayAudio(Message message) throws SQLException {
@@ -253,156 +264,73 @@ public class Server {
         sendSocketMessage(out, response);
     }
 
-    // xu li khi nguoi dung gui cau tra loi
-    private synchronized void handleAnswer(Message message) throws InterruptedException, SQLException, IOException, ClassNotFoundException {
-        AnswerRequest request = Parser.fromJson(message.getData(), AnswerRequest.class);
+    private void handleEndgame(Message message) throws SQLException, IOException, ClassNotFoundException {
+        EndRequest request = Parser.fromJson(message.getData(), EndRequest.class);
         int userId = message.getSender();
         int matchId = request.getMatchId();
-        int round = request.getRound();
+        int score = request.getFinalScore();
 
-        synchronized (answers) {
-            if (answers.containsKey(matchId)) {
-                AnswerRequest oppRequest = Parser.fromJson(answers.get(matchId).getData(), AnswerRequest.class);
-                int oppId = answers.get(matchId).getSender();
+        User user = userDAO.getUser(userId);
+        User opponent = userDAO.findOpponent(matchId, userId);
+        MatchScore matchScore = matchScores.computeIfAbsent(matchId, id -> new MatchScore(userId, opponent.getId()));
 
-                float time1 = request.getTime();
-                float time2 = oppRequest.getTime();
+        matchScore.setScore(userId, score);
 
-                Question question = questionDAO.getQuestionsByRoundAndMatch(matchId, round);
-                String answer1 = request.getAnswer();
-                String answer2 = oppRequest.getAnswer();
+        DataOutputStream userOut = clients.get(user);
+        DataOutputStream oppOut = clients.get(opponent);
 
-                int winnerId = 0;
-                int loserId = 0;
+        userDAO.updateUserMatchScore(userId, matchId, score);
 
-                if (answer1.equals(question.getAnswer()) && !answer2.equals(question.getAnswer())) {
-                    winnerId = userId;
-                    loserId = oppId;
-                    handleWinOrLose(winnerId, loserId, question.getAnswer());
-                } else if (answer2.equals(question.getAnswer()) && !answer1.equals(question.getAnswer())) {
-                    winnerId = oppId;
-                    loserId = userId;
-                    handleWinOrLose(winnerId, loserId, question.getAnswer());
-                } else {
-                    if (time1 < time2) {
-                        winnerId = userId;
-                        loserId = oppId;
-                    } else if (time2 < time1) {
-                        winnerId = oppId;
-                        loserId = userId;
-                    } else {
-                        handleDraw(userId, oppId);
-                        return;
-                    }
-                    handleCompareTime(winnerId, loserId, time1, time2);
-                }
+        if (matchScore.isBothScoresSubmitted()) {
+            int winnerId = matchScore.getWinnerId();
 
-                answers.remove(matchId);
+            if (winnerId == -1) {
+                userDAO.updateUser(user.getId(), user.getUsername(), user.getRole(), user.getScore()+1);
+                userDAO.updateUser(opponent.getId(), opponent.getUsername(), opponent.getRole(), opponent.getScore()+1);
+
+                Message response = new Message(
+                        -1,
+                        "end game",
+                        "Tie!",
+                        null
+                );
+
+                sendSocketMessage(userOut, response);
+                sendSocketMessage(oppOut, response);
             } else {
-                answers.put(matchId, message);
+                Message winResponse = new Message(
+                        -1,
+                        "end game",
+                        "You win",
+                        null
+                );
+
+                Message loseResponse = new Message(
+                        -1,
+                        "end game",
+                        "You lose",
+                        null
+                );
+
+                if (winnerId == userId) {
+                    userDAO.updateUser(user.getId(), user.getUsername(), user.getRole(), user.getScore()+3);
+
+                    sendSocketMessage(userOut, winResponse);
+                    sendSocketMessage(oppOut, loseResponse);
+                }else {
+                    userDAO.updateUser(opponent.getId(), opponent.getUsername(), user.getRole(), opponent.getScore()+3);
+
+                    sendSocketMessage(userOut, loseResponse);
+                    sendSocketMessage(oppOut, winResponse);
+                }
             }
+
+            matchScores.remove(matchId);
         }
-    }
 
-    private void handleEndgame(Message message) throws SQLException {
-        EndRequest request = Parser.fromJson(message.getData(), EndRequest.class);
-
-        int userId = message.getSender();
-
-        userDAO.updateUserMatch(userId, request.getMatchId(), request.getFinalScore());
+        userDAO.updateUserMatch(userId, matchId, score);
 
         playing.remove(userId);
-    }
-
-    private void handleDraw(int userId1, int userId2) throws SQLException, IOException, ClassNotFoundException {
-        User user1 = userDAO.getUser(userId1);
-        User user2 = userDAO.getUser(userId2);
-
-        DataOutputStream out1 = clients.get(user1);
-        DataOutputStream out2 = clients.get(user2);
-
-        Message response = new Message(
-                -1,
-                "answer",
-                "Draw!",
-                null
-        );
-
-        sendSocketMessage(out1, response);
-        sendSocketMessage(out2, response);
-    }
-
-    private void handleWinOrLose(int winnerId, int loserId, String correctAnswer) throws SQLException, IOException, ClassNotFoundException {
-        User winner = userDAO.getUser(winnerId);
-        User loser = userDAO.getUser(loserId);
-
-        DataOutputStream out1 = clients.get(winner);
-        DataOutputStream out2 = clients.get(loser);
-
-        Message winnerMsg = new Message(
-                -1,
-                "answer",
-                correctAnswer,
-                "You win!!"
-        );
-
-        Message loserMsg = new Message(
-                -1,
-                "answer",
-                correctAnswer,
-                "Wrong answer"
-        );
-
-        sendSocketMessage(out1, winnerMsg);
-        sendSocketMessage(out2, loserMsg);
-    }
-
-    private void handleCompareTime(int winnerId, int loserId, float winnerTime, float loserTime) throws SQLException, IOException, ClassNotFoundException {
-        User winner = userDAO.getUser(winnerId);
-        User loser = userDAO.getUser(loserId);
-
-        DataOutputStream out1 = clients.get(winner);
-        DataOutputStream out2 = clients.get(loser);
-
-        Message winnerMsg = new Message(
-                -1,
-                "answer",
-                "You win your opponent time is " + loserTime,
-                null
-        );
-
-        Message loserMsg = new Message(
-                -1,
-                "answer",
-                "You lose, your opponent time is " + winnerTime,
-                null
-        );
-
-        sendSocketMessage(out1, winnerMsg);
-        sendSocketMessage(out2, loserMsg);
-    }
-
-    // xu li khi bat dau 1 vong choi moi
-    private void handleNewRound(Message message) throws SQLException, IOException, ClassNotFoundException {
-        RoundRequest request = Parser.fromJson(message.getData(), RoundRequest.class);
-
-        int userId = request.getUserId();
-        User user = userDAO.getUser(userId);
-
-        int round = request.getRound();
-        int matchId = request.getMatchId();
-
-        Question question = questionDAO.getQuestionsByRoundAndMatch(matchId, round);
-
-        Message response = new Message(
-                -1,
-                "new round",
-                Parser.toJson(question),
-                null
-        );
-
-        DataOutputStream out = clients.get(user);
-        sendSocketMessage(out, response);
     }
 
     // xu li phan hoi loi moi khong duoc chap nhan
@@ -474,10 +402,18 @@ public class Server {
         Match match = matchDAO.createMatch(currentTime, userId, invitedId, randomQuestions);
         match.setUser1(user);
         match.setUser2(invited);
+
+        List<QuestionAnswer> questionAnswers = questionDAO.getQuestionsByMatch(match.getId());
+
+        MatchStart matchStart = new MatchStart(
+                match,
+                questionAnswers
+        );
+
         Message response = new Message(
                 -1,
                 "invite accepted",
-                Parser.toJson(match),
+                Parser.toJson(matchStart),
                 null
         );
 

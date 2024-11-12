@@ -13,8 +13,6 @@ import java.net.InetSocketAddress;
 
 public class Main {
     public static void main(String[] args) throws IOException {
-
-
         System.out.println("HTTP server started at http://localhost:8081");
         MatchDAO matchDAO = new MatchDAO();
         QuestionDAO questionDAO = new QuestionDAO();

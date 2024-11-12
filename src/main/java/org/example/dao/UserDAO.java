@@ -105,13 +105,14 @@ public class UserDAO extends DAO {
     }
 
 
-    public void updateUser(int id, String username, String role) throws SQLException {
-        String query = "UPDATE users SET username = ?, role = ? WHERE id = ?";
+    public void updateUser(int id, String username, String role, int score) throws SQLException {
+        String query = "UPDATE users SET username = ?, role = ?, score = ? WHERE id = ?";
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
             stmt.setString(1, username);
             stmt.setString(2, role);
-            stmt.setInt(3, id);
+            stmt.setInt(3, score);
+            stmt.setInt(4, id);
             int rowsUpdated = stmt.executeUpdate();
             if (rowsUpdated > 0) {
                 System.out.println("User updated successfully.");
@@ -185,6 +186,34 @@ public class UserDAO extends DAO {
         return historyList;
     }
 
+    public User findOpponent(int matchId, int userId) throws SQLException {
+        String query = "SELECT u.id, u.username, u.password, u.email, u.role, u.score " +
+                "FROM users u " +
+                "JOIN user_match um ON u.id = um.user_id " +
+                "WHERE um.match_id = ? AND u.id != ?";
+
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+            stmt.setInt(1, matchId);
+            stmt.setInt(2, userId);
+
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return new User(
+                        rs.getInt("id"),
+                        rs.getString("username"),
+                        rs.getString("password"),
+                        rs.getString("email"),
+                        rs.getString("role"),
+                        rs.getInt("score")
+                );
+            } else {
+                System.out.println("Opponent not found.");
+                return null;
+            }
+        }
+    }
+
     public List<LeaderboardResponse> getLeaderboard() {
         String sql = "SELECT u.id, u.username, SUM(um.correct_answers) AS total_scores " +
                 "FROM users u " +
@@ -211,5 +240,28 @@ public class UserDAO extends DAO {
 
         return leaderboard;
     }
+
+    public void updateUserMatchScore(int userId, int matchId, int score) throws SQLException {
+        String sql = "UPDATE user_match SET correct_answers = ? WHERE user_id = ? AND match_id = ?";
+
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setInt(1, score);     // Điểm mới của người dùng
+            stmt.setInt(2, userId);    // ID người dùng
+            stmt.setInt(3, matchId);   // ID trận đấu
+
+            int rowsUpdated = stmt.executeUpdate();
+            if (rowsUpdated > 0) {
+                System.out.println("Score updated successfully for user " + userId + " in match " + matchId);
+            } else {
+                System.out.println("No matching record found to update score.");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
 }
   
