@@ -10,6 +10,7 @@ import org.example.model.Question;
 import org.example.model.User;
 
 import java.io.*;
+import java.net.BindException;
 import java.net.DatagramPacket;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -74,6 +75,8 @@ public class Server {
                     }
                 }).start();
             }
+        }catch (BindException _) {
+
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -88,7 +91,7 @@ public class Server {
 
             // gui ca client socket cho action login (truong hop nguoi dung sai thong tin login)
             handleAction(message, clientSocket);
-        } catch (IOException | ClassNotFoundException | SQLException | InterruptedException e) {
+        } catch (SQLException e) {
             Message message = new Message(
                     -1,
                     "error",
@@ -99,6 +102,8 @@ public class Server {
             sendSocketMessage(out, message);
 
             System.out.println("Client disconnected: " +  clientSocket.getRemoteSocketAddress());
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -112,6 +117,9 @@ public class Server {
                 break;
             case "login":
                 handleLogin(message, clientSocket);
+                break;
+            case "logout":
+                handleLogout(message);
                 break;
             case "invite":
                 handleInvite(message);
@@ -146,7 +154,24 @@ public class Server {
             case "update question":
                 handleUpdateQuestion(message);
                 break;
+            case "update info":
+                handleUpdateUserInfo(message);
+                break;
         }
+    }
+
+    private void handleUpdateUserInfo(Message message) throws SQLException, IOException, ClassNotFoundException {
+        User user = Parser.fromJson(message.getData(), User.class);
+
+        userDAO.updateUser(user.getId(), user.getUsername(), user.getEmail(), user.getScore());
+
+        DataOutputStream out = clients.get(user);
+
+        clients.remove(user);
+
+        clients.put(user, out);
+
+        broadcastOnline();
     }
 
 
@@ -159,38 +184,6 @@ public class Server {
         int questionId = Parser.fromJson(message.getData(), Integer.class);
         questionDAO.deleteQuestion(questionId);
     }
-
-    private void handlePlayAudio(Message message) throws SQLException {
-        int userId = message.getSender();
-        User user = userDAO.getUser(userId);
-
-        DataOutputStream out = clients.get(user);
-
-        String path = message.getData();
-        File audioFile = new File(path);
-
-        if (audioFile.exists() && audioFile.isFile()) {
-            System.out.println("Tìm thấy file: " + path);
-
-            try (FileInputStream fis = new FileInputStream(audioFile)) {
-                byte[] buffer = new byte[4096];
-                int bytesRead;
-
-                while ((bytesRead = fis.read(buffer)) != -1) {
-                    out.write(buffer, 0, bytesRead);
-                }
-
-                out.flush();
-                System.out.println("Gửi file hoàn tất!");
-
-            } catch (IOException e) {
-                throw new RuntimeException("Lỗi khi gửi file âm thanh.", e);
-            }
-        } else {
-            System.out.println("Không tìm thấy file: " + path);
-        }
-    }
-
 
     private void handleQuestions(Message message) throws SQLException, IOException, ClassNotFoundException {
         List<Question> questions = questionDAO.getAllQuestions();
@@ -216,6 +209,16 @@ public class Server {
 
         questionDAO.createQuestion(question.getSoundUrl(), question.getAnswer());
 
+    }
+
+    private void handleLogout(Message message) throws SQLException, IOException, ClassNotFoundException {
+        int userId = message.getSender();
+        User user = userDAO.getUser(userId);
+
+        if (userId != 0) {
+            clients.remove(user);
+            broadcastOnline();
+        }
     }
 
     private void handleExit(Message message, Socket client) throws SQLException, IOException, ClassNotFoundException {
@@ -331,6 +334,8 @@ public class Server {
         userDAO.updateUserMatch(userId, matchId, score);
 
         playing.remove(userId);
+
+        broadcastPlaying();
     }
 
     // xu li phan hoi loi moi khong duoc chap nhan
@@ -549,7 +554,7 @@ public class Server {
         User[] users = playing.keySet().toArray(new User[0]);
 
         for (Map.Entry<User, DataOutputStream> entry : clients.entrySet()) {
-            Message message = new Message(-1, "online", Parser.toJson(users), null);
+            Message message = new Message(-1, "playing", Parser.toJson(users), null);
             sendSocketMessage(entry.getValue(), message);
         }
     }

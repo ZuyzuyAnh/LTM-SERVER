@@ -105,12 +105,12 @@ public class UserDAO extends DAO {
     }
 
 
-    public void updateUser(int id, String username, String role, int score) throws SQLException {
-        String query = "UPDATE users SET username = ?, role = ?, score = ? WHERE id = ?";
+    public void updateUser(int id, String username, String email, int score) throws SQLException {
+        String query = "UPDATE users SET username = ?, email = ?, score = ? WHERE id = ?";
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
             stmt.setString(1, username);
-            stmt.setString(2, role);
+            stmt.setString(2, email);
             stmt.setInt(3, score);
             stmt.setInt(4, id);
             int rowsUpdated = stmt.executeUpdate();
@@ -151,9 +151,9 @@ public class UserDAO extends DAO {
     }
 
     public List<HistoryResponse> getUserMatchHistory(int userId) {
-        String sql = "SELECT u1.username AS player_name, u2.username AS opponent_name, " +
+        String sql = "SELECT u2.username AS opponent_name, " +
                 "um1.match_id, m.time AS match_time, " +
-                "um1.correct_answers AS player_correct_answers, um1.status AS player_status " +
+                "um1.correct_answers AS player_correct_answers " +
                 "FROM user_match um1 " +
                 "JOIN users u1 ON um1.user_id = u1.id " +
                 "JOIN matchs m ON um1.match_id = m.id " +
@@ -169,14 +169,12 @@ public class UserDAO extends DAO {
             ResultSet resultSet = statement.executeQuery();
 
             while (resultSet.next()) {
-                String user = resultSet.getString("player_name");
                 String opponent = resultSet.getString("opponent_name");
                 int matchId = resultSet.getInt("match_id");
                 Timestamp matchTime = resultSet.getTimestamp("match_time");
                 int scores = resultSet.getInt("player_correct_answers");
-                String status = resultSet.getString("player_status");
 
-                HistoryResponse history = new HistoryResponse(user, opponent, matchId, matchTime, scores, status);
+                HistoryResponse history = new HistoryResponse(opponent, matchId, matchTime, scores);
                 historyList.add(history);
             }
         } catch (SQLException e) {
@@ -185,6 +183,7 @@ public class UserDAO extends DAO {
 
         return historyList;
     }
+
 
     public User findOpponent(int matchId, int userId) throws SQLException {
         String query = "SELECT u.id, u.username, u.password, u.email, u.role, u.score " +
