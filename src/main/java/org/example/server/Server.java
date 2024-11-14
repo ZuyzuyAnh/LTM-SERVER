@@ -340,12 +340,13 @@ public class Server {
             clients.put(user, userOut);
             clients.put(opponent, oppOut);
 
-            playing.remove(user);
-            playing.remove(opponent);
+
         }
 
         userDAO.updateUserMatch(userId, matchId, score);
 
+        playing.remove(user);
+        playing.remove(opponent);
 
         broadcastPlaying();
     }
