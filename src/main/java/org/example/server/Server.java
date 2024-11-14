@@ -288,8 +288,10 @@ public class Server {
             int winnerId = matchScore.getWinnerId();
 
             if (winnerId == -1) {
-                userDAO.updateUser(user.getId(), user.getUsername(), user.getRole(), user.getScore()+1);
-                userDAO.updateUser(opponent.getId(), opponent.getUsername(), opponent.getRole(), opponent.getScore()+1);
+                user.setScore(user.getScore()+1);
+                opponent.setScore(opponent.getScore()+1);
+                userDAO.updateUser(user.getId(), user.getUsername(), user.getEmail(), user.getScore());
+                userDAO.updateUser(opponent.getId(), opponent.getUsername(), opponent.getEmail(), opponent.getScore());
 
                 Message response = new Message(
                         -1,
@@ -316,12 +318,14 @@ public class Server {
                 );
 
                 if (winnerId == userId) {
-                    userDAO.updateUser(user.getId(), user.getUsername(), user.getRole(), user.getScore()+3);
+                    user.setScore(user.getScore()+3);
+                    userDAO.updateUser(user.getId(), user.getUsername(), user.getEmail(), user.getScore());
 
                     sendSocketMessage(userOut, winResponse);
                     sendSocketMessage(oppOut, loseResponse);
                 }else {
-                    userDAO.updateUser(opponent.getId(), opponent.getUsername(), user.getRole(), opponent.getScore()+3);
+                    opponent.setScore(opponent.getScore()+3);
+                    userDAO.updateUser(opponent.getId(), opponent.getUsername(), opponent.getEmail(), opponent.getScore());
 
                     sendSocketMessage(userOut, loseResponse);
                     sendSocketMessage(oppOut, winResponse);
@@ -329,11 +333,19 @@ public class Server {
             }
 
             matchScores.remove(matchId);
+
+            clients.remove(opponent);
+            clients.remove(user);
+
+            clients.put(user, userOut);
+            clients.put(opponent, oppOut);
+
+            playing.remove(user);
+            playing.remove(opponent);
         }
 
         userDAO.updateUserMatch(userId, matchId, score);
 
-        playing.remove(userId);
 
         broadcastPlaying();
     }
